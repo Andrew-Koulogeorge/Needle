@@ -7,16 +7,33 @@ from ..autograd import TensorTuple, TensorTupleOp
 from .ops_mathematic import *
 
 from ..backend_selection import array_api, BACKEND 
+class LogSoftmax(TensorOp): # COME BACK!
+    def __init__(self) -> None:
+        self.axes = (1,)
 
-class LogSoftmax(TensorOp):
     def compute(self, Z):
+
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
+        max_val = (logsumexp(Tensor(Z), axes=self.axes)).realize_cached_data().reshape((Z.shape[0],1))
+        return Z - max_val
         ### END YOUR SOLUTION
 
     def gradient(self, out_grad, node):
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
+        pass
+        # Z = node.inputs[0].realize_cached_data()
+        # reshape_max_z = array_api.max(Z, axis=self.axes, keepdims=True)
+        # expanded_input_shape = reshape_max_z.shape
+        # diff = array_api.exp(Z -reshape_max_z) # numpy does automatic broadcast
+        # total_sum = array_api.broadcast_to(array_api.sum(diff, axis=self.axes, keepdims=True), Z.shape)
+        # one = 1 /total_sum  # do we need to watch numerical stability? (shape of Z; numpy supports element wise division)
+        # three = array_api.where(array_api.broadcast_to(reshape_max_z, Z.shape) == Z, 1, 0) # should auto broadcast in numpy
+        # two = diff + three*(-total_sum)
+
+        # logsumgrad = (one * two + three)#.reshape(expanded_input_shape).broadcast_to(Z.shape)
+        # ones = array_api.ones_like(Z)
+
+        # return Tensor(ones - logsumgrad) * out_grad
         ### END YOUR SOLUTION
 
 
@@ -26,35 +43,29 @@ def logsoftmax(a):
 
 class LogSumExp(TensorOp):
     def __init__(self, axes: Optional[tuple] = None):
-        if isinstance(axes, int):
-            axes=(axes,)
         self.axes = axes
 
     def compute(self, Z):
-        ### BEGIN YOUR SOLUTION
-        # SEE NDARRAY LINE 590 IN FUNCTION reduce_view_out!!! I changed a line
-        max_z_original = Z.max(axis=self.axes, keepdims=True) 
-        max_z_reduce = Z.max(axis=self.axes)
-        exp_diff = array_api.exp(Z - max_z_original.broadcast_to(Z.shape))        
-        return array_api.log(array_api.sum(exp_diff, axis=self.axes)) + max_z_reduce 
-        ### END YOUR SOLUTION
+        max_z = array_api.max(Z, axis=self.axes, keep_dims=False)
+        reshape_max_z = array_api.max(Z, axis=self.axes, keepdims=True)
+        sum_diff = array_api.sum(array_api.exp(Z -reshape_max_z), axis=self.axes)
+        return array_api.log(sum_diff) + max_z
 
     def gradient(self, out_grad, node):
-        ### BEGIN YOUR SOLUTION
         z = node.inputs[0]
-        max_z = Tensor(z.realize_cached_data().max(axis=self.axes, keepdims=True), device=z.device)
-        exp_z = exp(z - max_z.broadcast_to(z.shape))
-        sum_exp_z = sum(exp_z, axes=self.axes)
-        grad_sum_exp_z = out_grad / sum_exp_z
-        expand_shape = list(z.shape)
-        axes = range(len(expand_shape)) if self.axes is None else self.axes
+
+        # need to identify the dims that were summed out in the forward pass
+        incoming_shape = list(z.shape)
+        axes = range(len(incoming_shape)) if self.axes is None else self.axes
         for axis in axes:
-            expand_shape[axis] = 1
-        grad_exp_z = grad_sum_exp_z.reshape(expand_shape).broadcast_to(z.shape)
+            incoming_shape[axis] = 1
+
+        # sum and reshape to fit the input dims
+        exp_z = summation(exp(z - z.realize_cached_data().max(self.axes, keepdims=True)),self.axes)
+        grad = out_grad / exp_z
+        grad_exp_z = grad.reshape(incoming_shape).broadcast_to(z.shape)
         return grad_exp_z * exp_z
-        ### END YOUR SOLUTION
 
 
 def logsumexp(a, axes=None):
     return LogSumExp(axes=axes)(a)
-
